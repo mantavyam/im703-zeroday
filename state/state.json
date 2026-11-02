@@ -1,1 +1,52 @@
-{}
+{
+  "github_issues": {
+    "amdavad-2027": 3,
+    "goa-2027": 2
+  },
+  "health": {
+    "amdavad-2027:njuko": {
+      "alerted": false,
+      "fails": 0,
+      "last_error": null
+    },
+    "amdavad-2027:page": {
+      "alerted": false,
+      "fails": 1,
+      "last_error": "ironman page: HTTP 403"
+    },
+    "goa-2027:njuko": {
+      "alerted": false,
+      "fails": 0,
+      "last_error": null
+    },
+    "goa-2027:page": {
+      "alerted": false,
+      "fails": 1,
+      "last_error": "ironman page: HTTP 403"
+    }
+  },
+  "last_heartbeat": "2026-11-02T16:32:36.101054+00:00",
+  "outbox": [],
+  "targets": {
+    "amdavad-2027": {
+      "activated_at": "2026-11-02T16:32:36.101054+00:00",
+      "opened_at": "2026-11-02T16:32:36.101054+00:00",
+      "page_state": null,
+      "phase": "open",
+      "register_url": "https://in.ind1.ironman.com/2027-ironman-703-amdavad",
+      "slug": "2027-ironman-703-amdavad",
+      "tier_low": {
+        "Individual Entry": 0
+      },
+      "tiers": {
+        "Individual Entry": 0
+      }
+    },
+    "goa-2027": {
+      "activated_at": "2026-11-02T16:32:36.101054+00:00",
+      "page_state": null,
+      "phase": "waiting"
+    }
+  },
+  "version": 1
+}
