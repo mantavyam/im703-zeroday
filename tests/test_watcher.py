@@ -524,3 +524,48 @@ def test_email_goes_to_me_plus_friends_as_bcc(monkeypatch):
 
     n = notify.Notifier({"GMAIL_ADDRESS": "me@gmail.com", "GMAIL_APP_PASSWORD": "p"})
     assert n.send(alert) and sent["to"] == ["me@gmail.com"]   # empty list -> just me
+
+
+# ------------------------------------------------------------------ Cloudflare-safe page fetch
+
+
+class _Resp:
+    def __init__(self, code, text=""):
+        self.status_code, self.text = code, text
+
+
+def _fake_curl_cffi(monkeypatch, response):
+    import sys
+    import types
+    mod = types.ModuleType("curl_cffi")
+    mod.requests = types.SimpleNamespace(get=lambda url, impersonate, timeout: response)
+    monkeypatch.setitem(sys.modules, "curl_cffi", mod)
+
+
+def test_fetch_page_uses_browser_fingerprint(monkeypatch):
+    html = (FX / "page_amdavad_open.html").read_text(encoding="utf-8")
+    _fake_curl_cffi(monkeypatch, _Resp(200, html))
+
+    class NoRequests:
+        def get(self, *a, **k):
+            raise AssertionError("fallback should not run")
+
+    assert sources.fetch_page(NoRequests(), "u").state == "open"
+
+
+def test_fetch_page_falls_back_then_reports_403(monkeypatch):
+    html = (FX / "page_goa_opening_soon.html").read_text(encoding="utf-8")
+    _fake_curl_cffi(monkeypatch, _Resp(403, "blocked"))
+
+    class Ok:
+        def get(self, *a, **k):
+            return _Resp(200, html)
+
+    assert sources.fetch_page(Ok(), "u").state == "opening_soon"
+
+    class Blocked:
+        def get(self, *a, **k):
+            return _Resp(403, "blocked")
+
+    with pytest.raises(sources.SourceError, match="HTTP 403"):
+        sources.fetch_page(Blocked(), "u")

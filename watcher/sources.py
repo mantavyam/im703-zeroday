@@ -192,10 +192,30 @@ def parse_page(html: str) -> PageInfo:
 
 
 def fetch_page(s: requests.Session, url: str) -> PageInfo:
+    """Fetch the register page.
+
+    ironman.com sits behind Cloudflare, which answers HTTP 403 to plain
+    Python/curl requests from GitHub's data-center IPs. curl_cffi sends the
+    same TLS fingerprint as a real browser and gets through (verified on a
+    GitHub runner 2026-11-02). Plain requests stays as a fallback.
+    """
     try:
-        r = s.get(url, timeout=40)
-    except requests.RequestException as e:
-        raise SourceError(f"ironman page: {e}") from e
-    if r.status_code != 200:
-        raise SourceError(f"ironman page: HTTP {r.status_code}")
-    return parse_page(r.text)
+        from curl_cffi import requests as browser
+    except ImportError:
+        browser = None
+    status, text, err = None, "", None
+    if browser is not None:
+        try:
+            r = browser.get(url, impersonate="chrome", timeout=40)
+            status, text = r.status_code, r.text
+        except Exception as e:
+            err = e
+    if status != 200:
+        try:
+            r = s.get(url, timeout=40)
+            status, text = r.status_code, r.text
+        except requests.RequestException as e:
+            raise SourceError(f"ironman page: {err or e}") from e
+    if status != 200:
+        raise SourceError(f"ironman page: HTTP {status}")
+    return parse_page(text)
