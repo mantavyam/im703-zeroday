@@ -1,0 +1,91 @@
+name: watch
+
+on:
+  schedule:
+    # Twice a day, 12 hours apart: 05:17 and 17:17 UTC = 10:47 and 22:47 IST.
+    # Ironman India opened Amdavad at 10:00 IST, so a morning opening is
+    # caught within the hour; anything else within ~12 hours.
+    # Minute 17 avoids the top-of-hour rush when GitHub delays runs.
+    # Want faster? e.g. "17 */6 * * *" = every 6 hours.
+    - cron: "17 5,17 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "run = check now | test-notify = test alert | stop / resume = turn alerts for one race off or on"
+        type: choice
+        options: [run, test-notify, stop, resume]
+        default: run
+      target:
+        description: "stop/resume only: target id from targets.yaml"
+        type: string
+        default: goa-2027
+      reason:
+        description: "stop only: why"
+        type: choice
+        options: [booked, not-interested]
+        default: booked
+
+permissions:
+  contents: write   # commit state/state.json
+  actions: write    # disable this workflow when every target is done
+  issues: write     # open/comment/close the alert issues
+
+concurrency:
+  group: watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Check registrations
+        id: run
+        run: |
+          case "$MODE" in
+            stop)   python -m watcher stop "$TARGET" --reason "$REASON" ;;
+            resume) python -m watcher resume "$TARGET" ;;
+            *)      python -m watcher "$MODE" ;;
+          esac
+        env:
+          MODE: ${{ inputs.mode || 'run' }}
+          TARGET: ${{ inputs.target }}
+          REASON: ${{ inputs.reason }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_USER_ID: ${{ secrets.DISCORD_USER_ID }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SUBSCRIBER_LIST: ${{ secrets.SUBSCRIBER_LIST }}
+          GITHUB_TOKEN: ${{ github.token }}
+          # Who to @mention on alert issues. Defaults to the repo owner; override
+          # with a repo variable NOTIFY_GITHUB_USER (Settings -> Variables).
+          NOTIFY_GITHUB_USER: ${{ vars.NOTIFY_GITHUB_USER || github.repository_owner }}
+
+      - name: Save state
+        if: always() && (inputs.mode || 'run') != 'test-notify'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/state.json
+          if git diff --cached --quiet; then
+            echo "State unchanged."
+          else
+            git commit -m "chore(state): update watcher state"
+            git pull --rebase --autostash || true
+            git push
+          fi
+
+      - name: Stop when all targets are done
+        if: steps.run.outputs.all_done == 'true' && github.event_name == 'schedule'
+        run: gh workflow disable watch.yml --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}

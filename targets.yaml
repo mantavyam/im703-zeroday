@@ -1,0 +1,35 @@
+# Races to watch. One entry = one race edition you want to register for.
+#
+# The watcher runs for each active target from `watch_from` until that
+# edition is sold out (or registration closes). Then the target is marked
+# done. When every active target is done, the workflow turns itself off.
+# To watch something new later: add a target and re-enable the workflow
+# (Actions tab -> watch -> "Enable workflow").
+
+targets:
+  - id: goa-2027
+    name: IRONMAN 70.3 Goa 2027
+    race_page: im703-goa          # from https://www.ironman.com/races/<race_page>/register
+    year: 2027                    # edition year you want
+    race_months: [10, 11]         # race usually held in Oct/Nov; used to sanity-check the edition
+    watch_from: 2026-11-02        # start watching on this date (day after the 2026 race)
+    active: true
+    # Only these entry types decide "sold out" and tier alerts.
+    # Matched case-insensitively against Njuko competition names.
+    # Use [] to track every entry type.
+    competitions: ["Individual Entry"]
+    tier_alert_pct: 80            # alert when the current price tier is this % full
+    extra_slugs: []               # extra Njuko slugs to try, if Ironman uses an odd one
+
+  # Example: inaugural Amdavad race (already open on 2026-11-02).
+  # Set active: true to get alerts for it too.
+  - id: amdavad-2027
+    name: IRONMAN 70.3 Amdavad 2027
+    race_page: im703-amdavad
+    year: 2027
+    race_months: [2]
+    watch_from: 2026-11-02
+    active: false
+    competitions: ["Individual Entry"]
+    tier_alert_pct: 80
+    extra_slugs: []
