@@ -43,7 +43,7 @@ def registration_event(target: "Target", ed: "Edition", sequence: int,
     start = ed.reg_start
     end = start + dt.timedelta(minutes=30)
     desc = (f"{target.name} registration opens. Early-bird slots usually sell out "
-            f"within ~48 hours.\nRegister: {ed.register_url}\nInfo: {target.page_url}")
+            f"within about 48 hours.\nRegister: {ed.register_url}\nInfo: {target.page_url}")
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -56,7 +56,7 @@ def registration_event(target: "Target", ed: "Edition", sequence: int,
         f"DTSTAMP:{_ts(now)}",
         f"DTSTART:{_ts(start)}",
         f"DTEND:{_ts(end)}",
-        f"SUMMARY:{_esc('🏊🚴🏃 ' + target.name + ' registration opens')}",
+        f"SUMMARY:{_esc(target.name + ' registration opens')}",
         f"DESCRIPTION:{_esc(desc)}",
         f"URL:{ed.register_url}",
         "STATUS:CONFIRMED",

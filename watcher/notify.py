@@ -1,8 +1,12 @@
 """Send every alert to Discord, Gmail and a GitHub issue.
 
-Discord: webhook message, @mentions you on urgent alerts.
-Gmail:   SMTP email; announced/opening-time alerts carry an .ics calendar invite.
-GitHub:  one issue per race; each alert is a comment that @mentions you, so
+Every channel gets the same message: a bold title, the body lines and a
+"Link:" line (see `compose`). Channels only add what they need to deliver it:
+
+Discord: plain text message (no embed, link previews off); @mentions you on
+         urgent alerts.
+Gmail:   subject = title; announced/opening-time alerts carry an .ics invite.
+GitHub:  one issue per race; each alert is a comment ending in "cc @you", so
          GitHub sends its own notification email + mobile push. The issue
          closes when the race is sold out/closed.
 
@@ -33,12 +37,10 @@ import requests
 
 from .engine import Alert
 
-COLORS = {"open": 0xE53935, "reminder": 0xE53935, "announced": 0xFB8C00,
-          "open_time": 0xFB8C00, "tier_change": 0xFDD835, "tier_low": 0xFDD835,
-          "sold_out": 0x757575, "closed": 0x757575, "error": 0x8E24AA,
-          "heartbeat": 0x43A047, "test": 0x1E88E5}
 GITHUB_API = "https://api.github.com"
 CLOSES_ISSUE = {"sold_out", "closed", "test"}
+DISCORD_LIMIT = 2000          # max characters in one Discord message
+SUPPRESS_EMBEDS = 1 << 2      # Discord message flag: no link preview cards
 
 
 _EMAIL_RE = re.compile(r"^[^@\s,;]+@[^@\s,;]+\.[^@\s,;]+$")
@@ -58,6 +60,14 @@ def parse_subscribers(raw: str) -> list[str]:
             seen.add(addr.lower())
             out.append(addr)
     return out
+
+
+def compose(alert: Alert) -> tuple[str, str]:
+    """The one message every channel sends: (title, markdown body)."""
+    lines = list(alert.lines)
+    if alert.url:
+        lines += ["", f"Link: {alert.url}"]
+    return alert.title, "\n".join(lines)
 
 
 def _plain(text: str) -> str:
@@ -104,9 +114,10 @@ class Notifier:
         names = [c for c in self.channels()
                  if alert.channels is None or c in alert.channels]
         if self.dry:
-            print(f"[DRY_RUN] {alert.kind} -> {alert.channels or 'all'}: {alert.title}")
-            for line in alert.lines:
-                print("    " + _plain(line))
+            title, body = compose(alert)
+            print(f"[DRY_RUN] {alert.kind} -> {alert.channels or 'all'}: {title}")
+            for line in body.split("\n"):
+                print("    " + line)
             if alert.ics:
                 print(f"    (+ .ics attachment, {len(alert.ics)} bytes)")
             return True
@@ -130,18 +141,16 @@ class Notifier:
             return False
 
     def _discord(self, alert: Alert) -> None:
-        desc = "\n".join(alert.lines)
-        if alert.url:
-            desc += f"\n\n➡️ {alert.url}"
-        payload = {
-            "username": "IRONMAN watcher",
-            "embeds": [{"title": alert.title[:256], "description": desc[:4000],
-                        "url": alert.url, "color": COLORS.get(alert.kind, 0x607D8B)}],
-            "allowed_mentions": {"parse": []},
-        }
+        title, body = compose(alert)
+        text = f"**{title}**\n{body}"
+        payload = {"username": "IRONMAN watcher", "flags": SUPPRESS_EMBEDS,
+                   "allowed_mentions": {"parse": []}}
         if alert.urgent and self.user_id:
-            payload["content"] = f"<@{self.user_id}>"
+            text = f"<@{self.user_id}>\n{text}"
             payload["allowed_mentions"] = {"users": [self.user_id]}
+        if len(text) > DISCORD_LIMIT:
+            text = text[:DISCORD_LIMIT - 3] + "..."
+        payload["content"] = text
         for attempt in range(3):
             r = requests.post(self.webhook, json=payload, timeout=20)
             if r.status_code == 429:  # rate limited
@@ -152,9 +161,9 @@ class Notifier:
         raise RuntimeError("discord rate limited 3 times")
 
     def _gmail(self, alert: Alert) -> None:
+        title, body = compose(alert)
         msg = EmailMessage()
-        prefix = "🚨 " if alert.urgent else ""
-        msg["Subject"] = prefix + alert.title
+        msg["Subject"] = title
         msg["From"] = f"IRONMAN watcher <{self.gmail}>"
         # Visible "To" is the sender; everyone on the list is Bcc'd so
         # friends don't see each other's addresses (or reply-all).
@@ -162,17 +171,9 @@ class Notifier:
         if alert.urgent:
             msg["X-Priority"] = "1"
             msg["Importance"] = "high"
-        body = [_plain(line) for line in alert.lines]
-        if alert.url:
-            body += ["", f"Link: {alert.url}"]
-        msg.set_content("\n".join(body) + "\n\n-- im703-zeroday watcher\n")
-        html_lines = "".join(f"<p>{_html(line)}</p>" for line in alert.lines)
-        if alert.url:
-            html_lines += (f'<p><a href="{html.escape(alert.url)}" style="font-size:18px;'
-                           f'font-weight:bold">➡️ Open registration page</a></p>')
-        msg.add_alternative(f"<html><body>{html_lines}"
-                            "<p style='color:#888'>im703-zeroday watcher</p></body></html>",
-                            subtype="html")
+        msg.set_content(_plain(body) + "\n")
+        paragraphs = "".join(f"<p>{_html(line)}</p>" if line else "" for line in body.split("\n"))
+        msg.add_alternative(f"<html><body>{paragraphs}</body></html>", subtype="html")
         if alert.ics:
             # Inline calendar part lets Gmail show an "Add to calendar" card;
             # the attachment works in every other mail client.
@@ -247,14 +248,10 @@ class Notifier:
 
     def _github(self, alert: Alert) -> None:
         key = alert.target_id or "_status"
-        lines = [f"### {alert.title}", ""] + list(alert.lines)
-        if alert.url:
-            lines += ["", f"➡️ {alert.url}"]
-        if alert.ics:
-            lines += ["", "📅 Calendar invite (.ics) sent by email."]
+        title, text = compose(alert)
+        body = f"**{title}**\n{text}"
         if self.gh_user:
-            lines += ["", f"cc @{self.gh_user}"]
-        body = "\n".join(lines)
+            body += f"\n\ncc @{self.gh_user}"
         number = self.issues.get(key)
         if number is not None:
             r = self._gh("POST", f"/issues/{number}/comments", body=body)
@@ -282,7 +279,7 @@ def issue_title(target_id: str, target_name: str) -> str:
 def intro_body(target_name: str) -> str:
     return (f"Watching **{target_name}** registration. Alerts appear here as comments.\n\n"
             "**Stop alerts for this race:**\n"
-            "- Registered? Close this issue as **Completed** 🎉\n"
+            "- Registered? Close this issue as **Completed**.\n"
             "- Changed your mind? Close it as **Not planned**.\n\n"
             "Reopen the issue to resume watching. If every race is stopped, the "
-            "workflow turns itself off; re-enable it first (Actions → watch).")
+            "workflow turns itself off. Re-enable it first (Actions, then watch).")

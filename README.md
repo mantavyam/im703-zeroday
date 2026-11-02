@@ -1,6 +1,6 @@
 # im703-zeroday
 
-GitHub Actions watcher that alerts you on **Discord**, **Gmail (with a calendar invite)** and **GitHub issues (@mention, so GitHub emails and pushes to your phone too)** when IRONMAN registration for a race you choose is announced, opens, changes price tier, or sells out. Then it stops by itself.
+GitHub Actions watcher that alerts you on **Discord**, **Gmail (with a calendar invite)** and **GitHub issues (@mention, so GitHub emails and pushes to your phone too)** when IRONMAN registration for a race you choose is announced, opens, changes price tier, or sells out. Then it stops by itself. Works for any IRONMAN, IRONMAN 70.3 or 5150 race listed on ironman.com, anywhere in the world.
 
 ## How it works
 
@@ -15,10 +15,10 @@ Twice a day (10:47 and 22:47 IST) it checks two sources for each target in `targ
 
 Each target moves through `waiting → announced → open → sold_out/closed`, and never goes backwards.
 
-Every alert goes to all three channels, except the weekly check-in and stop/resume confirmations, which go only to Discord:
+Every alert goes to all three channels, except the weekly check-in and stop/resume confirmations, which go only to Discord. Each channel gets the same plain-text message (bold title, body, `Link:`), with no emojis:
 
-- **Discord:** a webhook message. Urgent alerts @mention you.
-- **Gmail:** an email. Announced and opening-time emails also carry a `.ics` calendar invite.
+- **Discord:** a plain text message (no embed, no link preview). Urgent alerts @mention you.
+- **Gmail:** subject = title. Announced and opening-time emails also carry a `.ics` calendar invite.
 - **GitHub:** one issue per race. Each alert is a comment ending in `cc @you`, so GitHub sends its own notification email and app push. The issue closes when the race is sold out or closed. The issue opens quietly (no @mention) when watching starts, so you can close it to stop alerts at any time. Watcher problems go to a separate "Watcher status" issue.
 
 | Alert | When |
@@ -75,7 +75,7 @@ When every active target is done, the workflow disables itself.
 Pick whichever is easiest:
 
 1. **Close the race's GitHub issue.** This works from the GitHub phone app.
-   - Close as **Completed**: you registered 🎉
+   - Close as **Completed**: you registered
    - Close as **Not planned**: you changed your mind
    - The next run stops checking that race and sends a short Discord confirmation.
    - **Reopen the issue** to start watching again.
@@ -88,24 +88,45 @@ When every active race is stopped or sold out, the workflow turns itself off. To
 
 ## Targets
 
-Edit `targets.yaml`:
+Edit `targets.yaml`. Values under `defaults:` apply to every race unless the race sets its own.
 
 ```yaml
-- id: goa-2027
-  name: IRONMAN 70.3 Goa 2027
-  race_page: im703-goa          # ironman.com/races/<race_page>/register
-  year: 2027
-  race_months: [10, 11]         # sanity check on the race date
-  watch_from: 2026-11-02
-  active: true
-  competitions: ["Individual Entry"]   # men's individual; women: "Individual Women Entry"
+defaults:
+  timezone: Asia/Kolkata                 # dates in alerts use this time zone
+  competitions: ["Individual Entry"]     # entry types that decide sold out / tier alerts
   tier_alert_pct: 80
-  extra_slugs: []
+
+targets:
+  - id: goa-2027
+    name: IRONMAN 70.3 Goa 2027
+    race_page: im703-goa                 # ironman.com/races/<race_page>/register, or the full URL
+    year: 2027
+    race_months: [10, 11]                # sanity check on the race date
+    watch_from: 2026-11-02               # usually the day after the previous edition
+    active: true
+    aliases:
+      enabled: false                     # true = also use the pages/slugs below
+      pages: []                          # more ironman.com pages to read for Njuko links
+      slugs: ["{year}-ironman-703-india-goa"]
 ```
 
-- **Entry-type names** come from Njuko. Amdavad has `Individual Entry`, `Individual Women Entry`, `Relay Entry` and `Relay Women Entry`. Use `[]` to track all of them.
+- **Any race worldwide:** use the page name from `https://www.ironman.com/races/<name>/register`. The Njuko slug is guessed from it:
+
+  | Page | Njuko slug tried |
+  |---|---|
+  | `im703-goa` | `{year}-ironman-703-goa` |
+  | `im-frankfurt` | `{year}-ironman-frankfurt` |
+  | `5150-samal` | `{year}-5150-samal` |
+
+  Set `timezone` (for example `Europe/Berlin` or `America/New_York`) so alert times show in the race's local time.
+- **Aliases:** about 15% of races use a different Njuko slug, e.g. `im703-oman` uses `2027-ironman-703-muscat`. Set `aliases.enabled: true` and list:
+  - `slugs`: plain slugs, patterns with `{year}` and `{place}` (the part after `im703-`/`im-`), or a full Njuko registration URL such as `https://in.njuko.com/2027-ironman-703-muscat`.
+  - `pages`: other ironman.com pages that may link to the registration (page name or full URL). These only add Njuko links; the main `race_page` still decides open or sold out.
+
+  Every alias is checked against Njuko's edition year, so a wrong guess can't trigger alerts for another year.
+- **Entry-type names** come from Njuko. Amdavad has `Individual Entry`, `Individual Women Entry`, `Relay Entry` and `Relay Women Entry`; other races may name them differently. Use `[]` to track all of them.
 - **Watch a future edition:** add a new target, for example `goa-2028` with `year: 2028`. Then re-enable the workflow: Actions → watch → Enable workflow.
-- **Unusual slugs:** most Njuko slugs are `{year}-ironman-703-{place}`, but a few differ (Oman is `muscat`). The watcher also reads the slug from the Register button. If you learn the slug some other way, add it to `extra_slugs`.
+- The watcher also reads the Njuko slug from the Register button on the page, so many odd slugs are found without aliases.
 
 ## Project layout
 
@@ -120,6 +141,10 @@ watcher/ics.py                calendar invite
 watcher/__main__.py           CLI and run loop
 tests/                        tests + real saved pages/API responses (2026-11-02)
 ```
+
+## Alert messages
+
+`docs/ALERT_MESSAGES.md` shows the exact text of every alert on each channel.
 
 ## Local use
 
@@ -137,4 +162,9 @@ python -m watcher resume goa-2027
 
 - GitHub can delay scheduled runs, and in rare high-load periods it skips them. The calendar alarms are the backup for a known opening time.
 - In about 20% of races checked, the Njuko edition appeared at or after opening, with no advance warning. In that case the alert comes at the next run, up to about 12 hours later.
+- Some races register through other systems (for example Active.com or a local organiser). For those, only the ironman.com page state is available, so you'll get a "page says registration is open" alert but no prices or opening time.
 - Njuko and Ironman can change their API or page at any time. If that breaks parsing, you get a "Watcher problem" alert instead of silence.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE). If you fork or build on this, keep the attribution in [NOTICE](NOTICE) and mark the files you changed.

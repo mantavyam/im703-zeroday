@@ -233,7 +233,9 @@ def test_discord_mentions_only_on_urgent(monkeypatch):
     n = notify.Notifier({"DISCORD_WEBHOOK_URL": "https://x", "DISCORD_USER_ID": "42"})
     alerts = evaluate(goa(), {"phase": "waiting"}, goa_edition(), None, T0)
     assert n.send(alerts[0])
-    assert posts[0]["content"] == "<@42>" and posts[0]["allowed_mentions"] == {"users": ["42"]}
+    assert posts[0]["content"].startswith("<@42>\n**IRONMAN 70.3 Goa 2027: registration announced**")
+    assert posts[0]["allowed_mentions"] == {"users": ["42"]}
+    assert "embeds" not in posts[0] and posts[0]["flags"] == 4   # plain text, no link preview
 
 
 # ------------------------------------------------------------------ runner
@@ -250,7 +252,7 @@ def test_run_end_to_end(tmp_path, monkeypatch):
     monkeypatch.setenv("DRY_RUN", "1")
 
     world = {"page": page("page_goa_opening_soon.html"), "ed": None, "tried": []}
-    monkeypatch.setattr(sources, "fetch_page", lambda s, url: world["page"])
+    monkeypatch.setattr(sources, "fetch_page", lambda s, url, **kw: world["page"])
 
     def fake_edition(s, slug):
         world["tried"].append(slug)
@@ -285,7 +287,7 @@ def test_failures_alert_after_two_runs_then_recover(tmp_path, monkeypatch):
     orig = notify.Notifier.send
     monkeypatch.setattr(notify.Notifier, "send", lambda self, a: sent.append(a.kind) or orig(self, a))
 
-    def boom(s, url):
+    def boom(s, url, **kw):
         raise sources.SourceError("layout changed")
 
     monkeypatch.setattr(sources, "fetch_page", boom)
@@ -294,7 +296,7 @@ def test_failures_alert_after_two_runs_then_recover(tmp_path, monkeypatch):
     assert "error" not in sent
     runner.run(T0 + dt.timedelta(days=1))
     assert sent.count("error") == 1
-    monkeypatch.setattr(sources, "fetch_page", lambda s, url: page("page_goa_opening_soon.html"))
+    monkeypatch.setattr(sources, "fetch_page", lambda s, url, **kw: page("page_goa_opening_soon.html"))
     sent.clear()
     runner.run(T0 + dt.timedelta(days=2))
     assert sent == ["heartbeat"]  # "working again"
@@ -420,7 +422,7 @@ def gh_world(tmp_path, monkeypatch):
                         lambda self, method, path, **kw: gh(self, method, path, **kw))
     fetched = []
     monkeypatch.setattr(sources, "fetch_page",
-                        lambda s, url: fetched.append(url) or page("page_goa_opening_soon.html"))
+                        lambda s, url, **kw: fetched.append(url) or page("page_goa_opening_soon.html"))
     monkeypatch.setattr(sources, "fetch_edition", lambda s, slug: None)
     out = tmp_path / "out"
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
@@ -591,7 +593,7 @@ def test_future_target_waits_for_watch_from(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_OUTPUT", str(out))
     monkeypatch.setenv("DRY_RUN", "1")
     tried, sent = [], []
-    monkeypatch.setattr(sources, "fetch_page", lambda s, url: page("page_amdavad_open.html"))
+    monkeypatch.setattr(sources, "fetch_page", lambda s, url, **kw: page("page_amdavad_open.html"))
     monkeypatch.setattr(sources, "fetch_edition", lambda s, slug: tried.append(slug))
     orig = notify.Notifier.send
     monkeypatch.setattr(notify.Notifier, "send", lambda self, a: sent.append(a) or orig(self, a))
@@ -602,3 +604,200 @@ def test_future_target_waits_for_watch_from(tmp_path, monkeypatch):
 
     runner.run(dt.datetime(2027, 2, 15, 5, 17, tzinfo=UTC))  # day after the 2027 race
     assert tried == ["2028-ironman-703-amdavad"]
+
+
+# ------------------------------------------------------------------ plain, identical messages
+
+
+EMOJI_RE = __import__("re").compile(
+    "[\U0001F000-\U0001FAFF☀-➿⬀-⯿️←-⇿]")
+
+
+def _all_alerts():
+    """One alert of every kind the watcher can send."""
+    t, soon = goa(), page("page_goa_opening_soon.html")
+    out = []
+    st = {"phase": "waiting"}
+    out += evaluate(t, st, goa_edition(), soon, T0)                                   # announced
+    out += evaluate(t, st, goa_edition(reg_start="2027-04-23T04:30:00.000Z"), soon, T0)  # open_time
+    out += evaluate(t, st, goa_edition(reg_start="2027-04-23T04:30:00.000Z"), soon,
+                    dt.datetime(2027, 4, 22, 5, 17, tzinfo=UTC))                      # reminder
+    opened = dt.datetime(2027, 4, 23, 5, 17, tzinfo=UTC)
+    out += evaluate(t, st, goa_edition("OPEN", "2027-04-23T04:30:00.000Z", reserved=lambda p: 10), soon, opened)
+    out += evaluate(t, st, goa_edition("OPEN", "2027-04-23T04:30:00.000Z",
+                    reserved=lambda p: int(p["participantLimit"] * .9) if p["order"] == 0 else 0), soon, opened)
+    out += evaluate(t, st, goa_edition("OPEN", "2027-04-23T04:30:00.000Z",
+                    reserved=lambda p: p["participantLimit"] if p["order"] == 0 else 0), soon, opened)
+    out += evaluate(t, st, goa_edition("OPEN", "2027-04-23T04:30:00.000Z",
+                    reserved=lambda p: p["participantLimit"]), soon, opened)          # sold out
+    out += evaluate(t, {"phase": "waiting"}, None, sources.PageInfo("open", []), T0)  # unconfirmed
+    t.race_months = [3]
+    out += evaluate(t, {"phase": "waiting"}, goa_edition(), None, T0)                 # month warning
+    hs = {}
+    runner.track_health(hs, "k", "Goa page", Exception("HTTP 403"), T0)
+    out += runner.track_health(hs, "k", "Goa page", Exception("HTTP 403"), T0)       # error
+    out += runner.track_health(hs, "k", "Goa page", None, T0)                        # recovered
+    out += [runner.stopped_alert(goa(), "booked"), runner.stopped_alert(goa(), "not-interested"),
+            runner.resumed_alert(goa())]
+    kinds = {a.kind for a in out}
+    assert {"announced", "open_time", "reminder", "open", "tier_low", "tier_change",
+            "sold_out", "page_open_unconfirmed", "error", "heartbeat", "stopped", "resumed"} <= kinds
+    return out
+
+
+def _capture_all_channels(monkeypatch, alert):
+    got = {}
+
+    class SMTP:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def login(self, *a): pass
+        def send_message(self, m, from_addr=None, to_addrs=None): got["mail"] = m
+
+    monkeypatch.setattr(notify.smtplib, "SMTP_SSL", SMTP)
+    monkeypatch.setattr(notify.requests, "post",
+                        lambda url, json=None, timeout=None, headers=None:
+                        got.setdefault("github" if "api.github" in url else "discord", json)
+                        or FakeResp(201, {"number": 1}))
+    monkeypatch.setattr(notify.requests, "patch", lambda *a, **k: FakeResp(200))
+    n = notify.Notifier({"DISCORD_WEBHOOK_URL": "https://d", "DISCORD_USER_ID": "42",
+                         "GMAIL_ADDRESS": "me@gmail.com", "GMAIL_APP_PASSWORD": "p",
+                         "GITHUB_TOKEN": "t", "GITHUB_REPOSITORY": "me/r", "NOTIFY_GITHUB_USER": "me"},
+                        issues={alert.target_id or "_status": 1})
+    alert.channels = None  # force every channel so all renderings are checked
+    assert n.send(alert)
+    return got
+
+
+def test_no_emoji_anywhere(monkeypatch):
+    for alert in _all_alerts():
+        got = _capture_all_channels(monkeypatch, alert)
+        texts = [got["discord"]["content"], got["github"]["body"], got["mail"]["Subject"]]
+        texts += [p.get_content() for p in got["mail"].walk() if p.get_content_type().startswith("text/")]
+        for text in texts:
+            assert not EMOJI_RE.search(text), (alert.kind, EMOJI_RE.findall(text))
+    assert not EMOJI_RE.search(notify.intro_body("x"))
+    assert not EMOJI_RE.search(registration_event(goa(), goa_edition(), 0, now=T0))
+
+
+def test_every_channel_gets_the_same_message(monkeypatch):
+    for alert in _all_alerts():
+        title, body = notify.compose(alert)
+        got = _capture_all_channels(monkeypatch, alert)
+        discord = got["discord"]["content"]
+        if discord.startswith("<@42>\n"):
+            discord = discord[len("<@42>\n"):]
+        github = got["github"]["body"].rsplit("\n\ncc @me", 1)[0]
+        plain = next(p for p in got["mail"].walk() if p.get_content_type() == "text/plain").get_content()
+        assert discord == github == f"**{title}**\n{body}", alert.kind
+        assert got["mail"]["Subject"] == title
+        assert plain.strip() == notify._plain(body).strip()
+        assert "embeds" not in got["discord"]
+
+
+# ------------------------------------------------------------------ aliases, defaults, worldwide
+
+
+def _load(tmp_path, text):
+    f = tmp_path / "targets.yaml"
+    f.write_text(text)
+    return load_targets(f)
+
+
+def test_aliases_enabled_adds_pages_and_slugs(tmp_path):
+    (t,) = _load(tmp_path, """
+targets:
+  - id: oman-2027
+    name: IRONMAN 70.3 Oman 2027
+    race_page: im703-oman
+    year: 2027
+    aliases:
+      enabled: true
+      pages: [im703-muscat, "https://www.ironman.com/races/im703-oman"]
+      slugs:
+        - "{year}-ironman-703-muscat"
+        - "{year}-ironman-703-{place}-qatar"
+        - https://in.njuko.com/2027-ironman-703-oman-special?campaign=x
+""")
+    assert t.page_urls() == ["https://www.ironman.com/races/im703-oman/register",
+                             "https://www.ironman.com/races/im703-muscat/register",
+                             "https://www.ironman.com/races/im703-oman"]
+    assert t.slug_candidates() == ["2027-ironman-703-oman", "2027-ironman-703-muscat",
+                                   "2027-ironman-703-oman-qatar", "2027-ironman-703-oman-special"]
+
+
+def test_aliases_disabled_are_ignored(tmp_path):
+    (t,) = _load(tmp_path, """
+targets:
+  - {id: x, name: X, race_page: im703-goa, year: 2027,
+     aliases: {enabled: false, pages: [im703-india], slugs: ["{year}-ironman-703-india-goa"]}}
+""")
+    assert t.page_urls() == ["https://www.ironman.com/races/im703-goa/register"]
+    assert t.slug_candidates() == ["2027-ironman-703-goa"]
+
+
+def test_defaults_and_timezone(tmp_path):
+    a, b = _load(tmp_path, """
+defaults:
+  timezone: Europe/Berlin
+  competitions: ["Individual Entry"]
+  tier_alert_pct: 70
+targets:
+  - {id: a, name: IRONMAN Frankfurt 2027, race_page: im-frankfurt, year: 2027}
+  - {id: b, name: IRONMAN 70.3 Goa 2027, race_page: im703-goa, year: 2027,
+     timezone: Asia/Kolkata, tier_alert_pct: 90}
+""")
+    assert (a.timezone, a.tier_alert_pct, a.competitions) == ("Europe/Berlin", 70, ["Individual Entry"])
+    assert (b.timezone, b.tier_alert_pct) == ("Asia/Kolkata", 90)
+    from watcher.engine import fmt_time
+    june = dt.datetime(2027, 6, 26, 6, 0, tzinfo=UTC)
+    assert fmt_time(june, a.tz) == "Sat 26 Jun 2027, 08:00 CEST"
+    assert fmt_time(june, b.tz) == "Sat 26 Jun 2027, 11:30 IST"
+    with pytest.raises(ValueError, match="unknown timezone"):
+        _load(tmp_path, "targets:\n  - {id: c, name: C, race_page: im-x, year: 2027, timezone: Mars/Base}\n")
+
+
+def test_default_slugs_for_every_brand():
+    for page, slug in [("im703-goa", "2027-ironman-703-goa"),
+                       ("im-new-zealand", "2027-ironman-new-zealand"),
+                       ("5150-samal", "2027-5150-samal"),
+                       ("https://www.ironman.com/races/im-cairns/register", "2027-ironman-cairns"),
+                       ("xterra-maui", "2027-xterra-maui")]:
+        assert Target(id="t", name="t", race_page=page, year=2027).slug_candidates()[0] == slug
+
+
+def test_alias_page_reveals_odd_slug(tmp_path, monkeypatch):
+    f = tmp_path / "targets.yaml"
+    f.write_text("targets:\n  - id: oman-2027\n    name: IRONMAN 70.3 Oman 2027\n"
+                 "    race_page: im703-oman\n    year: 2027\n    competitions: []\n"
+                 "    aliases:\n      enabled: true\n      pages: [im703-oman-overview]\n")
+    monkeypatch.setattr(runner, "TARGETS", f)
+    monkeypatch.setattr(runner, "STATE", tmp_path / "state.json")
+    monkeypatch.setenv("DRY_RUN", "1")
+    main_page = sources.PageInfo("opening_soon", [])
+    alias_page = sources.PageInfo(None, ["2027-ironman-703-muscat"])
+    seen_require = []
+
+    def fetch_page(s, url, require_state=True):
+        seen_require.append(require_state)
+        return main_page if url.endswith("im703-oman/register") else alias_page
+
+    tried = []
+    monkeypatch.setattr(sources, "fetch_page", fetch_page)
+    monkeypatch.setattr(sources, "fetch_edition",
+                        lambda s, slug: tried.append(slug) or (
+                            goa_edition() if slug == "2027-ironman-703-muscat" else None))
+    runner.run(T0)
+    assert seen_require == [True, False]            # only the main page must carry a state
+    assert tried[-1] == "2027-ironman-703-muscat"   # slug found on the alias page
+    state = json.loads((tmp_path / "state.json").read_text())
+    assert state["targets"]["oman-2027"]["phase"] == "announced"
+
+
+def test_alias_page_without_state_is_fine():
+    p = sources.parse_page("<html><body class='x'><a href='https://in.njuko.com/2027-ironman-703-goa'>"
+                           "</a></body></html>", require_state=False)
+    assert p.state is None and p.slugs == ["2027-ironman-703-goa"]
+    merged = sources.merge_pages([sources.PageInfo("opening_soon", []), p])
+    assert merged.state == "opening_soon" and merged.slugs == ["2027-ironman-703-goa"]

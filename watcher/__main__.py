@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import sources
 from .config import Target, load_targets
-from .engine import DONE, IST, Alert, edition_matches, evaluate, fmt_time
+from .engine import DONE, Alert, edition_matches, evaluate, fmt_time
 from .ics import registration_event
 from .notify import Notifier
 
@@ -66,7 +66,7 @@ def track_health(state: dict, key: str, label: str, err: Exception | None,
         recovered = h["alerted"]
         h.update(fails=0, alerted=False, last_error=None)
         if recovered:
-            return [Alert(kind="heartbeat", title=f"✅ {label} working again",
+            return [Alert(kind="heartbeat", title=f"{label} working again",
                           lines=["Checks are succeeding again."])]
         return []
     h["fails"] += 1
@@ -74,7 +74,7 @@ def track_health(state: dict, key: str, label: str, err: Exception | None,
     if h["fails"] >= FAIL_ALERT_AFTER and not h["alerted"]:
         h["alerted"] = True
         return [Alert(kind="error", urgent=True,
-                      title=f"⚠️ Watcher problem: {label}",
+                      title=f"Watcher problem: {label}",
                       lines=[f"Failed {h['fails']} runs in a row.",
                              f"Last error: `{h['last_error']}`",
                              "The other source may still work. Check the Actions logs. "
@@ -82,20 +82,20 @@ def track_health(state: dict, key: str, label: str, err: Exception | None,
     return []
 
 
-def active_targets(targets: list[Target], state: dict, today: dt.date) -> list[Target]:
+def active_targets(targets: list[Target], state: dict, now: dt.datetime) -> list[Target]:
     tst = state.get("targets", {})
     return [t for t in targets
-            if t.active and t.started(today)
+            if t.active and t.started(t.local_date(now))
             and tst.get(t.id, {}).get("phase") not in DONE
             and not tst.get(t.id, {}).get("stopped")]
 
 
-STOP_REASONS = {"booked": "you registered 🎉", "not-interested": "you're not registering"}
+STOP_REASONS = {"booked": "you registered", "not-interested": "you are not registering"}
 
 
 def stopped_alert(t: Target, reason: str) -> Alert:
     return Alert(kind="stopped", channels=["discord"], target_id=t.id, target_name=t.name,
-                 title=f"⏹️ {t.name}: alerts stopped ({STOP_REASONS.get(reason, reason)})",
+                 title=f"{t.name}: alerts stopped ({STOP_REASONS.get(reason, reason)})",
                  lines=["No more alerts for this race.",
                         "To watch again: reopen its GitHub issue, or run the workflow "
                         "with mode `resume`."])
@@ -103,7 +103,7 @@ def stopped_alert(t: Target, reason: str) -> Alert:
 
 def resumed_alert(t: Target) -> Alert:
     return Alert(kind="resumed", channels=["discord"], target_id=t.id, target_name=t.name,
-                 title=f"▶️ {t.name}: watching resumed",
+                 title=f"{t.name}: watching resumed",
                  lines=["Alerts for this race are back on."])
 
 
@@ -132,7 +132,6 @@ def apply_issue_controls(t: Target, st: dict, notifier: Notifier,
 
 def run(now: dt.datetime | None = None) -> int:
     now = now or dt.datetime.now(dt.timezone.utc)
-    today = now.astimezone(IST).date()
     targets = load_targets(TARGETS)  # module globals so tests can point elsewhere
     state = load_state()
     state.setdefault("version", 1)
@@ -143,19 +142,25 @@ def run(now: dt.datetime | None = None) -> int:
 
     # Your stop/resume actions on the race issues come first.
     for t in targets:
-        if t.active and t.started(today):
+        if t.active and t.started(t.local_date(now)):
             st = tstates.setdefault(t.id, {"phase": "waiting", "activated_at": now.isoformat()})
             alerts += apply_issue_controls(t, st, notifier, now)
 
-    for t in active_targets(targets, state, today):
+    for t in active_targets(targets, state, now):
         st = tstates.setdefault(t.id, {"phase": "waiting", "activated_at": now.isoformat()})
         notifier.ensure_issue(t.id, t.name)
 
-        page, page_err = None, None
-        try:
-            page = sources.fetch_page(sess, t.page_url)
-        except sources.SourceError as e:
-            page_err = e
+        # Main page decides the state; alias pages only add Njuko links.
+        pages, page_err = [], None
+        for i, url in enumerate(t.page_urls()):
+            try:
+                pages.append(sources.fetch_page(sess, url, require_state=(i == 0)))
+            except sources.SourceError as e:
+                if i == 0:
+                    page_err = e
+                else:
+                    print(f"[{t.id}] alias page failed: {url}: {e}")
+        page = sources.merge_pages(pages)
 
         slugs = [st.get("slug")] if st.get("slug") else []
         slugs += t.slug_candidates()
@@ -191,14 +196,14 @@ def run(now: dt.datetime | None = None) -> int:
             if not t.active:
                 continue
             st = tstates.get(t.id, {})
-            if not t.started(today):
+            if not t.started(t.local_date(now)):
                 lines.append(f"**{t.name}**: starts watching {t.watch_from:%d %b %Y}")
                 continue
             line = f"**{t.name}**: {st.get('phase', 'not started')}"
             if st.get("stopped"):
                 line += f" (stopped: {STOP_REASONS.get(st['stopped']['reason'], '')})"
             elif st.get("ics_for"):
-                line += f", opens {fmt_time(dt.datetime.fromisoformat(st['ics_for']))}"
+                line += f", opens {fmt_time(dt.datetime.fromisoformat(st['ics_for']), t.tz)}"
             lines.append(line)
         alerts.append(Alert(kind="heartbeat", channels=["discord"],
                             title="Weekly check-in: watcher is running",
@@ -213,12 +218,12 @@ def run(now: dt.datetime | None = None) -> int:
 
     save_state(state)
 
-    remaining = active_targets(targets, state, today)
-    pending = [t for t in targets if t.active and not t.started(today)]
+    remaining = active_targets(targets, state, now)
+    pending = [t for t in targets if t.active and not t.started(t.local_date(now))]
     all_done = not remaining and not pending
     github_output(all_done=str(all_done).lower(), alerts=len(alerts))
 
-    summary = [f"### Watcher run {fmt_time(now)}", ""]
+    summary = [f"### Watcher run {now:%Y-%m-%d %H:%M} UTC", ""]
     for t in targets:
         st = tstates.get(t.id, {})
         status_word = "stopped" if st.get("stopped") else ("active" if t.active else "inactive")
@@ -246,7 +251,7 @@ def test_notify() -> int:
     alert = Alert(kind="test", urgent=True, target_id="test", target_name=t.name, url=t.page_url,
                   title="Test alert from im703-zeroday",
                   lines=["If you can read this, alerts work on this channel.",
-                         f"The attached test calendar event is at {fmt_time(ed.reg_start)}. "
+                         f"The attached test calendar event is at {fmt_time(ed.reg_start, t.tz)}. "
                          "Delete it after checking."],
                   ics=registration_event(t, ed, 0))
     ok = n.send(alert)

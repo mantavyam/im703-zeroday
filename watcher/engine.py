@@ -9,6 +9,7 @@ Phases only move forward:
 """
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 from dataclasses import dataclass, field
 from zoneinfo import ZoneInfo
@@ -17,7 +18,7 @@ from .config import Target
 from .ics import registration_event
 from .sources import Edition, PageInfo
 
-IST = ZoneInfo("Asia/Kolkata")
+IST = ZoneInfo("Asia/Kolkata")  # default display zone; each target can set its own
 RANK = {"waiting": 0, "announced": 1, "open": 2, "sold_out": 3, "closed": 3}
 DONE = {"sold_out", "closed"}
 # Runs every 12 h; remind once when opening is within ~a day.
@@ -37,15 +38,22 @@ class Alert:
     channels: list[str] | None = None  # None = every channel; e.g. ["discord"]
 
 
-def fmt_time(t: dt.datetime | None) -> str:
+def fmt_time(t: dt.datetime | None, tz: ZoneInfo = IST) -> str:
+    """Wed 14 Oct 2026, 10:00 IST (in the race's own time zone)."""
     if t is None:
         return "unknown"
-    return t.astimezone(IST).strftime("%a %d %b %Y, %H:%M IST")
+    local = t.astimezone(tz)
+    return local.strftime("%a %d %b %Y, %H:%M ") + (local.tzname() or "")
 
 
 def fmt_money(amount: int, currency: str) -> str:
-    sym = {"INR": "₹", "USD": "$", "EUR": "€", "GBP": "£", "AUD": "A$"}.get(currency)
+    sym = {"INR": "₹", "USD": "US$", "EUR": "€", "GBP": "£", "AUD": "A$", "NZD": "NZ$",
+           "CAD": "C$", "JPY": "¥", "CNY": "CN¥", "BRL": "R$", "ZAR": "R"}.get(currency)
     return f"{sym}{amount:,}" if sym else f"{amount:,} {currency}"
+
+
+def fmt_months(months: list[int]) -> str:
+    return ", ".join(calendar.month_abbr[m] for m in months if 1 <= m <= 12)
 
 
 def tier_lines(target: Target, ed: Edition) -> list[str]:
@@ -65,7 +73,7 @@ def tier_lines(target: Target, ed: Edition) -> list[str]:
         if nxt:
             line += f"; next tier {fmt_money(nxt.all_in, ed.currency)}"
         out.append(line)
-    return out or ["(no tracked entry types found; check `competitions` in targets.yaml)"]
+    return out or ["No tracked entry types found. Check `competitions` in targets.yaml."]
 
 
 def tracked_all_full(target: Target, ed: Edition) -> bool:
@@ -82,17 +90,18 @@ def edition_matches(target: Target, ed: Edition) -> bool:
 def month_warning(target: Target, ed: Edition | None) -> list[str]:
     if not ed or not ed.race_start or not target.race_months:
         return []
-    m = ed.race_start.astimezone(IST).month
+    m = ed.race_start.astimezone(target.tz).month
     if m in target.race_months:
         return []
-    return [f"⚠️ Race date {fmt_time(ed.race_start)} is outside expected months "
-            f"{target.race_months}. Double-check this is the right edition."]
+    return [f"Warning: race date {fmt_time(ed.race_start, target.tz)} is outside expected "
+            f"months ({fmt_months(target.race_months)}). Check this is the right edition."]
 
 
 def evaluate(target: Target, st: dict, ed: Edition | None, page: PageInfo | None,
              now: dt.datetime) -> list[Alert]:
     """Update target state `st` in place and return alerts to send."""
     alerts: list[Alert] = []
+    tz = target.tz
     prev = st.get("phase", "waiting")
     year_prefix = f"{target.year}-"
     page_confirmed = bool(page and any(s.startswith(year_prefix) for s in page.slugs))
@@ -130,10 +139,9 @@ def evaluate(target: Target, st: dict, ed: Edition | None, page: PageInfo | None
             st["unconfirmed_open_alerted"] = True
             alerts.append(Alert(
                 kind="page_open_unconfirmed", urgent=True,
-                title=f"{target.name}: Ironman page says registration OPEN (check now)",
+                title=f"{target.name}: Ironman page says registration is open",
                 lines=["The register page switched to open, but no Njuko edition "
-                       f"for {target.year} was found yet. It may be this edition.",
-                       f"Page: {target.page_url}"],
+                       f"for {target.year} was found yet. It may be this edition. Check the page now."],
                 url=target.page_url))
 
     new = max(prev, observed, key=RANK.get)
@@ -151,28 +159,29 @@ def evaluate(target: Target, st: dict, ed: Edition | None, page: PageInfo | None
             st["ics_for"] = key
             ics_text = registration_event(target, ed, st["ics_seq"])
             ics_alert_lines.append(
-                f"{'🔁 Opening time CHANGED' if changed else '📅 Opening time'}: "
-                f"**{fmt_time(ed.reg_start)}**. Calendar invite attached in email.")
+                f"{'Opening time changed to' if changed else 'Registration opens'}: "
+                f"**{fmt_time(ed.reg_start, tz)}**. A calendar invite is attached to the email.")
 
     # ---- phase transitions
     if new != prev and new == "announced":
         lines = []
         if ed:
-            lines.append(f"Njuko edition `{ed.slug}` created (status {ed.status}).")
-            lines.append(f"Race day: {fmt_time(ed.race_start)}")
-            lines += ics_alert_lines or ["Opening time not published yet; "
-                                         "you'll get another alert when it is."]
+            lines.append(f"The {target.year} edition is now listed on Njuko "
+                         f"(`{ed.slug}`, status {ed.status}).")
+            lines.append(f"Race day: {fmt_time(ed.race_start, tz)}")
+            lines += ics_alert_lines or ["Opening time not published yet. "
+                                         "You will get another alert when it is."]
         else:
-            lines.append(f"Ironman page links to a {target.year} registration: "
+            lines.append(f"The Ironman page now links to a {target.year} registration: "
                          f"{', '.join(page.slugs if page else [])}")
         lines += month_warning(target, ed)
         alerts.append(Alert(kind="announced", urgent=True, ics=ics_text, url=reg_url,
-                            title=f"{target.name}: registration ANNOUNCED", lines=lines))
+                            title=f"{target.name}: registration announced", lines=lines))
         ics_text, ics_alert_lines = None, []
 
     if ics_text:  # opening time set/changed later
         alerts.append(Alert(kind="open_time", urgent=True, ics=ics_text, url=reg_url,
-                            title=f"{target.name}: registration opens {fmt_time(ed.reg_start)}",
+                            title=f"{target.name}: registration opens {fmt_time(ed.reg_start, tz)}",
                             lines=ics_alert_lines + month_warning(target, ed)))
 
     # ---- "opens before the next run" reminder (calendar alarms are the backup)
@@ -184,18 +193,18 @@ def evaluate(target: Target, st: dict, ed: Edition | None, page: PageInfo | None
         hours, mins = divmod(int(left.total_seconds() // 60), 60)
         when = f"{hours} h {mins} min" if hours else f"{mins} min"
         alerts.append(Alert(kind="reminder", urgent=True, url=reg_url,
-                            title=f"{target.name}: registration opens in ~{when}",
-                            lines=[f"Opens {fmt_time(ed.reg_start)}.",
+                            title=f"{target.name}: registration opens in about {when}",
+                            lines=[f"Opens {fmt_time(ed.reg_start, tz)}.",
                                    "Be logged in to your IRONMAN account and ready to pay."]))
 
     if RANK[new] >= RANK["open"] and RANK[prev] < RANK["open"] and new not in DONE:
         st["opened_at"] = st.get("opened_at") or now.isoformat()
-        lines = ["🚨 Register now. Early-bird slots usually go within ~48 hours."]
+        lines = ["Register now. Early-bird slots usually sell out within about 48 hours."]
         if ed:
             lines += tier_lines(target, ed)
         lines += month_warning(target, ed)
         alerts.append(Alert(kind="open", urgent=True, url=reg_url,
-                            title=f"{target.name}: registration is OPEN", lines=lines))
+                            title=f"{target.name}: registration is open", lines=lines))
         if ed:  # baseline so the first tier change is relative to opening
             for c in ed.competitions:
                 if target.tracks(c.name):
@@ -229,7 +238,7 @@ def evaluate(target: Target, st: dict, ed: Edition | None, page: PageInfo | None
                 low[c.name] = cur
                 t = c.tiers[cur]
                 alerts.append(Alert(kind="tier_low", urgent=True, url=reg_url,
-                                    title=f"{target.name}: current tier {t.pct}% full",
+                                    title=f"{target.name}: current price tier {t.pct}% full",
                                     lines=[f"**{c.name}**: only {t.remaining}/{t.limit} left at "
                                            f"{fmt_money(t.all_in, ed.currency)} before the "
                                            "price goes up."]))
@@ -238,9 +247,9 @@ def evaluate(target: Target, st: dict, ed: Edition | None, page: PageInfo | None
         st["done_at"] = now.isoformat()
         why = "sold out" if new == "sold_out" else "closed"
         alerts.append(Alert(kind=new, url=reg_url,
-                            title=f"{target.name}: registration {why}. Watching stopped.",
+                            title=f"{target.name}: registration {why}, watching stopped",
                             lines=[f"All tracked entry types are {why}. "
-                                   "This target is done and won't be checked again."]))
+                                   "This race will not be checked again."]))
 
     for a in alerts:
         a.target_id = target.id

@@ -175,23 +175,39 @@ def fetch_edition(s: requests.Session, slug: str) -> Edition | None:
 
 @dataclass
 class PageInfo:
-    state: str
-    slugs: list[str]  # Njuko slugs linked from the page
+    state: str | None  # None for alias pages that don't carry a registration state
+    slugs: list[str]   # Njuko slugs linked from the page
 
 
-def parse_page(html: str) -> PageInfo:
+def parse_page(html: str, require_state: bool = True) -> PageInfo:
+    """Read the registration state and Njuko links from an ironman.com page.
+
+    Alias pages (e.g. a race overview page) may have no state; pass
+    require_state=False to only collect their Njuko links.
+    """
     body = re.search(r"<body[^>]*>", html)
     m = _STATE_RE.search(body.group(0)) if body else None
+    slugs = list(dict.fromkeys(_REG_LINK_RE.findall(html)))
     if not m:
-        raise SourceError("ironman page: no registration-state class on <body>")
+        if require_state:
+            raise SourceError("ironman page: no registration-state class on <body>")
+        return PageInfo(state=None, slugs=slugs)
     state = m.group(1)
     if state not in PAGE_STATES:
         raise SourceError(f"ironman page: unknown state {state!r}")
-    slugs = list(dict.fromkeys(_REG_LINK_RE.findall(html)))
     return PageInfo(state=state, slugs=slugs)
 
 
-def fetch_page(s: requests.Session, url: str) -> PageInfo:
+def merge_pages(pages: list[PageInfo]) -> PageInfo | None:
+    """Main page decides the state (first page with one); links come from all pages."""
+    if not pages:
+        return None
+    state = next((p.state for p in pages if p.state), None)
+    slugs = list(dict.fromkeys(s for p in pages for s in p.slugs))
+    return PageInfo(state=state, slugs=slugs)
+
+
+def fetch_page(s: requests.Session, url: str, require_state: bool = True) -> PageInfo:
     """Fetch the register page.
 
     ironman.com sits behind Cloudflare, which answers HTTP 403 to plain
@@ -218,4 +234,4 @@ def fetch_page(s: requests.Session, url: str) -> PageInfo:
             raise SourceError(f"ironman page: {err or e}") from e
     if status != 200:
         raise SourceError(f"ironman page: HTTP {status}")
-    return parse_page(text)
+    return parse_page(text, require_state=require_state)

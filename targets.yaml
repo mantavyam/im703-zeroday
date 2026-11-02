@@ -1,35 +1,84 @@
 # Races to watch. One entry = one race edition you want to register for.
+# Works for any IRONMAN-brand race on ironman.com (IRONMAN, IRONMAN 70.3, 5150).
 #
-# The watcher runs for each active target from `watch_from` until that
-# edition is sold out (or registration closes). Then the target is marked
-# done. When every active target is done, the workflow turns itself off.
-# To watch something new later: add a target and re-enable the workflow
-# (Actions tab -> watch -> "Enable workflow").
+# The watcher checks each active race from `watch_from` until that edition is
+# sold out or registration closes, then marks it done. When every active race
+# is done, the workflow turns itself off. To watch something new later: add a
+# race and re-enable the workflow (Actions tab -> watch -> "Enable workflow").
+#
+# Fields per race:
+#   id            short unique name, e.g. goa-2027
+#   name          shown in every alert
+#   race_page     ironman.com page name from https://www.ironman.com/races/<race_page>/register
+#                 (or the full URL). The Njuko slug is guessed from it:
+#                   im703-goa      -> {year}-ironman-703-goa
+#                   im-frankfurt   -> {year}-ironman-frankfurt
+#                   5150-samal     -> {year}-5150-samal
+#   year          edition year you want
+#   race_months   months the race is usually held in (1-12); a different race
+#                 date adds a warning to the alert
+#   watch_from    date to start checking, usually the day after the previous edition
+#   active        false = ignore this race
+#   timezone      time zone for dates in alerts (IANA name, e.g. Europe/Berlin)
+#   competitions  Njuko entry types that decide "sold out" and tier alerts
+#                 (exact names, case-insensitive); [] = all entry types
+#   tier_alert_pct  alert when the current price tier is this % full
+#   aliases       extra pages/slugs for races whose Njuko slug or page name
+#                 differs from the guess (about 15% of races do):
+#                   enabled  true to use the lists below, false to ignore them
+#                   pages    more ironman.com pages to read for Njuko links
+#                            (page name or full URL)
+#                   slugs    more Njuko slugs to try. Use {year} and {place}
+#                            (the part after im703-/im-), or paste a full
+#                            Njuko registration URL.
+#                 Known examples: im703-oman -> 2027-ironman-703-muscat,
+#                 im-frankfurt -> 2027-ironman-frankfurt-european-championship
+
+# Applied to every race unless the race sets its own value.
+defaults:
+  timezone: Asia/Kolkata
+  competitions: ["Individual Entry"]   # men's individual; women: "Individual Women Entry"
+  tier_alert_pct: 80
 
 targets:
   - id: goa-2027
     name: IRONMAN 70.3 Goa 2027
-    race_page: im703-goa          # from https://www.ironman.com/races/<race_page>/register
-    year: 2027                    # edition year you want
-    race_months: [10, 11]         # race usually held in Oct/Nov; used to sanity-check the edition
-    watch_from: 2026-11-02        # start watching on this date (day after the 2026 race)
+    race_page: im703-goa
+    year: 2027
+    race_months: [10, 11]         # held in Oct/Nov
+    watch_from: 2026-11-02        # day after the 2026 race
     active: true
-    # Only these entry types decide "sold out" and tier alerts.
-    # Matched case-insensitively against Njuko competition names.
-    # Use [] to track every entry type.
-    competitions: ["Individual Entry"]
-    tier_alert_pct: 80            # alert when the current price tier is this % full
-    extra_slugs: []               # extra Njuko slugs to try, if Ironman uses an odd one
+    aliases:
+      enabled: false              # set to true to also try the slugs below
+      pages: []
+      slugs:
+        - "{year}-ironman-703-india-goa"
+        - "{year}-ironman-703-goa-india"
 
-  # Amdavad's inaugural race is 14 Feb 2027; start watching for the 2028
-  # edition the day after. Njuko slug expected: 2028-ironman-703-amdavad.
+  # Inaugural race 14 Feb 2027; watch for the 2028 edition from the day after.
   - id: amdavad-2028
     name: IRONMAN 70.3 Amdavad 2028
     race_page: im703-amdavad
     year: 2028
     race_months: [1, 2, 3]        # 2027 race was in Feb; allow a month either side
-    watch_from: 2027-02-15        # day after the 2027 race
+    watch_from: 2027-02-15
     active: true
-    competitions: ["Individual Entry"]
-    tier_alert_pct: 80
-    extra_slugs: []
+    aliases:
+      enabled: false
+      pages: []
+      slugs: []
+
+  # Example for a race outside India (inactive). Copy and adjust.
+  # - id: frankfurt-2028
+  #   name: IRONMAN Frankfurt 2028
+  #   race_page: im-frankfurt
+  #   year: 2028
+  #   race_months: [6, 7]
+  #   watch_from: 2027-06-28
+  #   active: true
+  #   timezone: Europe/Berlin
+  #   competitions: []
+  #   aliases:
+  #     enabled: true
+  #     pages: []
+  #     slugs: ["{year}-ironman-frankfurt-european-championship"]
