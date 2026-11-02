@@ -55,15 +55,6 @@ targets:
         - "{year}-ironman-703-india-goa"
         - "{year}-ironman-703-goa-india"
 
-  # TEMPORARY MOCK TEST: Amdavad 2027 is open now, so this sends a real OPEN alert.
-  - id: amdavad-2027
-    name: IRONMAN 70.3 Amdavad 2027
-    race_page: im703-amdavad
-    year: 2027
-    race_months: [2]
-    watch_from: 2026-11-02
-    active: true
-
   # Inaugural race 14 Feb 2027; watch for the 2028 edition from the day after.
   - id: amdavad-2028
     name: IRONMAN 70.3 Amdavad 2028
