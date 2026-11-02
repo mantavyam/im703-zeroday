@@ -46,6 +46,15 @@ def goa():
 T0 = dt.datetime(2026, 11, 3, 5, 17, tzinfo=UTC)
 
 
+def goa_only_targets(tmp_path):
+    """Tests use their own target list so edits to the real targets.yaml can't break them."""
+    f = tmp_path / "targets.yaml"
+    f.write_text("targets:\n  - id: goa-2027\n    name: IRONMAN 70.3 Goa 2027\n"
+                 "    race_page: im703-goa\n    year: 2027\n    race_months: [10, 11]\n"
+                 "    competitions: ['Individual Entry']\n")
+    return f
+
+
 # ------------------------------------------------------------------ sources
 
 
@@ -269,7 +278,7 @@ def test_run_end_to_end(tmp_path, monkeypatch):
 
 
 def test_failures_alert_after_two_runs_then_recover(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner, "TARGETS", Path(__file__).parent.parent / "targets.yaml")
+    monkeypatch.setattr(runner, "TARGETS", goa_only_targets(tmp_path))
     monkeypatch.setattr(runner, "STATE", tmp_path / "state.json")
     monkeypatch.setenv("DRY_RUN", "1")
     sent = []
@@ -400,7 +409,7 @@ class FakeGitHub:
 
 @pytest.fixture
 def gh_world(tmp_path, monkeypatch):
-    monkeypatch.setattr(runner, "TARGETS", Path(__file__).parent.parent / "targets.yaml")
+    monkeypatch.setattr(runner, "TARGETS", goa_only_targets(tmp_path))
     monkeypatch.setattr(runner, "STATE", tmp_path / "state.json")
     for k in ("DRY_RUN", "DISCORD_WEBHOOK_URL", "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD"):
         monkeypatch.delenv(k, raising=False)
