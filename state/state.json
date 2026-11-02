@@ -35,6 +35,12 @@
       "phase": "open",
       "register_url": "https://in.ind1.ironman.com/2027-ironman-703-amdavad",
       "slug": "2027-ironman-703-amdavad",
+      "stopped": {
+        "at": "2026-11-02T16:42:04.306587+00:00",
+        "issue_closed": true,
+        "reason": "not-interested",
+        "via": "issue"
+      },
       "tier_low": {
         "Individual Entry": 0
       },
