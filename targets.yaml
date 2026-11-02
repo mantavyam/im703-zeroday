@@ -21,14 +21,14 @@ targets:
     tier_alert_pct: 80            # alert when the current price tier is this % full
     extra_slugs: []               # extra Njuko slugs to try, if Ironman uses an odd one
 
-  # MOCK TEST: Amdavad 2027 is open right now, so this sends a real OPEN alert.
-  # Switched off again after the test.
-  - id: amdavad-2027
-    name: IRONMAN 70.3 Amdavad 2027
+  # Amdavad's inaugural race is 14 Feb 2027; start watching for the 2028
+  # edition the day after. Njuko slug expected: 2028-ironman-703-amdavad.
+  - id: amdavad-2028
+    name: IRONMAN 70.3 Amdavad 2028
     race_page: im703-amdavad
-    year: 2027
-    race_months: [2]
-    watch_from: 2026-11-02
+    year: 2028
+    race_months: [1, 2, 3]        # 2027 race was in Feb; allow a month either side
+    watch_from: 2027-02-15        # day after the 2027 race
     active: true
     competitions: ["Individual Entry"]
     tier_alert_pct: 80

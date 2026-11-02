@@ -191,6 +191,9 @@ def run(now: dt.datetime | None = None) -> int:
             if not t.active:
                 continue
             st = tstates.get(t.id, {})
+            if not t.started(today):
+                lines.append(f"**{t.name}**: starts watching {t.watch_from:%d %b %Y}")
+                continue
             line = f"**{t.name}**: {st.get('phase', 'not started')}"
             if st.get("stopped"):
                 line += f" (stopped: {STOP_REASONS.get(st['stopped']['reason'], '')})"

@@ -578,3 +578,27 @@ def test_fetch_page_falls_back_then_reports_403(monkeypatch):
 
     with pytest.raises(sources.SourceError, match="HTTP 403"):
         sources.fetch_page(Blocked(), "u")
+
+
+def test_future_target_waits_for_watch_from(tmp_path, monkeypatch):
+    f = tmp_path / "targets.yaml"
+    f.write_text("targets:\n  - id: amdavad-2028\n    name: IRONMAN 70.3 Amdavad 2028\n"
+                 "    race_page: im703-amdavad\n    year: 2028\n    race_months: [1, 2, 3]\n"
+                 "    watch_from: 2027-02-15\n")
+    monkeypatch.setattr(runner, "TARGETS", f)
+    monkeypatch.setattr(runner, "STATE", tmp_path / "state.json")
+    out = tmp_path / "out"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(out))
+    monkeypatch.setenv("DRY_RUN", "1")
+    tried, sent = [], []
+    monkeypatch.setattr(sources, "fetch_page", lambda s, url: page("page_amdavad_open.html"))
+    monkeypatch.setattr(sources, "fetch_edition", lambda s, slug: tried.append(slug))
+    orig = notify.Notifier.send
+    monkeypatch.setattr(notify.Notifier, "send", lambda self, a: sent.append(a) or orig(self, a))
+
+    runner.run(T0)                                       # Nov 2026: not started
+    assert tried == [] and "all_done=false" in out.read_text()
+    assert "starts watching 15 Feb 2027" in sent[0].lines[0]
+
+    runner.run(dt.datetime(2027, 2, 15, 5, 17, tzinfo=UTC))  # day after the 2027 race
+    assert tried == ["2028-ironman-703-amdavad"]
