@@ -2,12 +2,24 @@
   "github_issues": {
     "goa-2027": 2
   },
-  "health": {},
+  "health": {
+    "goa-2027:njuko": {
+      "alerted": false,
+      "fails": 0,
+      "last_error": null
+    },
+    "goa-2027:page": {
+      "alerted": false,
+      "fails": 0,
+      "last_error": null
+    }
+  },
   "last_heartbeat": "2026-11-02T16:32:36.101054+00:00",
   "outbox": [],
   "targets": {
     "goa-2027": {
       "activated_at": "2026-11-02T16:32:36.101054+00:00",
+      "page_state": "opening_soon",
       "phase": "waiting"
     }
   },
