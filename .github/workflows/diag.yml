@@ -1,0 +1,36 @@
+name: diag-fetch
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -q requests curl_cffi
+      - run: |
+          cat > d.py <<'PY'
+          import re, requests
+          U = "https://www.ironman.com/races/im703-amdavad/register"
+          CH = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9", "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "none", "Sec-Fetch-User": "?1"}
+          def show(name, code, text):
+              m = re.search(r"registration-state--(\w+)", text or "")
+              print(f"{name:34s} HTTP {code}  len={len(text or '')}  state={m.group(1) if m else None}  cf={'cf-mitigated' if 'Just a moment' in (text or '') else ''}")
+          for name, h in [("requests default UA", {}), ("requests chrome headers", CH)]:
+              try:
+                  r = requests.get(U, headers=h, timeout=30); show(name, r.status_code, r.text)
+              except Exception as e: print(name, "ERR", e)
+          from curl_cffi import requests as cr
+          for imp in ["chrome", "chrome131", "safari", "firefox"]:
+              try:
+                  r = cr.get(U, impersonate=imp, timeout=30); show(f"curl_cffi impersonate={imp}", r.status_code, r.text)
+              except Exception as e: print(imp, "ERR", e)
+          for q in ["?_=1", ""]:
+              try:
+                  r = cr.get(U.replace("/register", "/register"+q), impersonate="chrome", timeout=30); show(f"curl_cffi chrome url{q or '(plain)'}", r.status_code, r.text)
+              except Exception as e: print("ERR", e)
+          PY
+          python d.py
+          curl -s -o /dev/null -w "curl plain: %{http_code}\n" -A "Mozilla/5.0" https://www.ironman.com/races/im703-amdavad/register
