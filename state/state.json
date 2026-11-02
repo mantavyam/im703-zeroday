@@ -11,8 +11,8 @@
     },
     "amdavad-2027:page": {
       "alerted": false,
-      "fails": 1,
-      "last_error": "ironman page: HTTP 403"
+      "fails": 0,
+      "last_error": null
     },
     "goa-2027:njuko": {
       "alerted": false,
@@ -21,8 +21,8 @@
     },
     "goa-2027:page": {
       "alerted": false,
-      "fails": 1,
-      "last_error": "ironman page: HTTP 403"
+      "fails": 0,
+      "last_error": null
     }
   },
   "last_heartbeat": "2026-11-02T16:32:36.101054+00:00",
@@ -31,7 +31,7 @@
     "amdavad-2027": {
       "activated_at": "2026-11-02T16:32:36.101054+00:00",
       "opened_at": "2026-11-02T16:32:36.101054+00:00",
-      "page_state": null,
+      "page_state": "open",
       "phase": "open",
       "register_url": "https://in.ind1.ironman.com/2027-ironman-703-amdavad",
       "slug": "2027-ironman-703-amdavad",
@@ -44,7 +44,7 @@
     },
     "goa-2027": {
       "activated_at": "2026-11-02T16:32:36.101054+00:00",
-      "page_state": null,
+      "page_state": "opening_soon",
       "phase": "waiting"
     }
   },
